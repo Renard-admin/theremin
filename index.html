@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Терменвокс | Masterpiece Edition</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700;900&family=Inter:wght@100;300;400;600&display=swap');
+
+        :root {
+            --gold: #C5A059;
+            --obsidian: #050505;
+            --panel-bg: rgba(10, 10, 10, 0.95);
+        }
+
+        body {
+            background-color: var(--obsidian);
+            color: #ffffff;
+            font-family: 'Inter', sans-serif;
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        h1 { font-family: 'Cinzel', serif; }
+
+        .gold-gradient-text {
+            background: linear-gradient(135deg, #C5A059 0%, #F9E5BC 50%, #8C6A3B 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .glass-panel {
+            background: var(--panel-bg);
+            backdrop-filter: blur(40px);
+            border-top: 1px solid rgba(197, 160, 89, 0.15);
+        }
+
+        /* Видео теперь занимает максимум места без искажений */
+        #output {
+            width: 100%;
+            height: 100%;
+            object-fit: contain; 
+            transform: scaleX(-1);
+            filter: contrast(1.1) brightness(0.9);
+            transition: all 0.5s ease;
+        }
+
+        .control-label {
+            font-size: 8px;
+            letter-spacing: 0.25em;
+            text-transform: uppercase;
+            color: rgba(255, 255, 255, 0.4);
+            margin-bottom: 6px;
+            display: block;
+        }
+
+        .wave-btn {
+            transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            background: rgba(255, 255, 255, 0.02);
+            font-size: 10px;
+            letter-spacing: 0.1em;
+            flex: 1;
+            padding: 12px 0;
+            text-align: center;
+            text-transform: uppercase;
+        }
+
+        .wave-btn.active {
+            border-color: var(--gold);
+            background: rgba(197, 160, 89, 0.15);
+            color: var(--gold);
+            box-shadow: 0 0 20px rgba(197, 160, 89, 0.1);
+        }
+
+        input[type="range"] {
+            -webkit-appearance: none;
+            background: rgba(255, 255, 255, 0.05);
+            height: 2px;
+            border-radius: 2px;
+            width: 100%;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 18px;
+            height: 18px;
+            background: var(--gold);
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 0 15px var(--gold);
+        }
+
+        #video-container {
+            position: relative;
+            flex: 1;
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            background: black;
+            /* Более широкая и мягкая маска для "большого" видео */
+            mask-image: radial-gradient(circle at center, black 70%, transparent 100%);
+        }
+
+        .hud-num { font-variant-numeric: tabular-nums; font-weight: 200; }
+        
+        .mode-badge {
+            font-size: 9px;
+            padding: 3px 10px;
+            border-radius: 4px;
+            background: rgba(197, 160, 89, 0.15);
+            color: var(--gold);
+            border: 1px solid rgba(197, 160, 89, 0.3);
+            letter-spacing: 0.1em;
+        }
+
+        header, footer {
+            position: relative;
+            z-index: 50;
+        }
+    </style>
+</head>
+<body class="safe-area-inset">
+
+    <!-- Экран загрузки -->
+    <div id="setup-screen" class="fixed inset-0 z-[100] bg-black flex flex-col items-center justify-center p-6 text-center transition-all duration-1000">
+        <h1 class="text-4xl md:text-6xl tracking-[0.5em] mb-4 gold-gradient-text opacity-0 animate-[fade_1.5s_ease-out_forwards]">THEREMIN PRO</h1>
+        <p class="text-white/20 text-[10px] tracking-[0.3em] uppercase mb-16 font-light italic">Создавая звук движением</p>
+        
+        <button id="start-btn" class="px-12 py-6 border border-white/10 hover:border-amber-600/50 transition-all duration-500 text-[11px] tracking-[0.5em] uppercase hover:bg-white/5 active:scale-95">
+            Запустить интерфейс
+        </button>
+
+        <div id="loader" class="hidden mt-12 w-64 h-[1px] bg-white/5 relative overflow-hidden">
+            <div class="absolute h-full bg-amber-600 w-1/3 animate-[load_2s_infinite]"></div>
+        </div>
+        
+        <style>
+            @keyframes fade { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+            @keyframes load { from { left: -100%; } to { left: 100%; } }
+        </style>
+    </div>
+
+    <!-- HUD: Верхняя панель -->
+    <header class="p-6 md:p-10 flex justify-between items-start pointer-events-none transition-opacity duration-700">
+        <div class="space-y-4">
+            <div class="bg-black/60 p-4 rounded-xl backdrop-blur-xl border border-white/10 shadow-2xl">
+                <span class="control-label !mb-1 text-[8px]">Активные входы</span>
+                <div class="flex items-center gap-3">
+                    <div id="hand-count" class="text-3xl md:text-4xl font-light hud-num">0</div>
+                    <span id="mode-text" class="mode-badge uppercase">Ожидание</span>
+                </div>
+            </div>
+            <div class="hidden md:block opacity-30">
+                <span class="control-label !mb-0 text-[8px]">Движок</span>
+                <span class="text-[9px] font-mono tracking-tighter">ULTRA_SENSE_PRO_V3</span>
+            </div>
+        </div>
+
+        <div class="flex flex-col items-end">
+            <div class="bg-black/60 p-4 rounded-xl backdrop-blur-xl border border-white/10 shadow-2xl text-right">
+                <span class="control-label !mb-1 text-[8px]">Частота сигнала / Гц</span>
+                <div id="freq-display" class="text-4xl md:text-7xl hud-num tracking-tighter leading-none">0000</div>
+            </div>
+            <div class="w-40 md:w-64 h-12 mt-6 opacity-60">
+                <canvas id="viz-canvas" class="w-full h-full"></canvas>
+            </div>
+        </div>
+    </header>
+
+    <!-- Главная сцена: Видео -->
+    <main id="video-container">
+        <video id="webcam" class="hidden" autoplay playsinline></video>
+        <canvas id="output"></canvas>
+        
+        <!-- Инфо-подсказки -->
+        <div class="absolute inset-x-0 bottom-10 px-16 flex justify-between opacity-30 text-[9px] tracking-[0.4em] uppercase font-mono pointer-events-none">
+            <div id="l-hint">Амплитуда (Левая)</div>
+            <div id="r-hint">Тональность (Правая)</div>
+        </div>
+    </main>
+
+    <!-- Панель управления -->
+    <footer class="glass-panel p-8 md:p-12">
+        <div class="max-w-7xl mx-auto grid grid-cols-2 lg:grid-cols-4 gap-10 md:gap-16 items-end">
+            
+            <!-- Форма волны -->
+            <div class="col-span-2 lg:col-span-1 space-y-4">
+                <span class="control-label">Тип осциллятора</span>
+                <div class="flex rounded-xl overflow-hidden border border-white/10 shadow-lg">
+                    <button class="wave-opt wave-btn active" data-value="sine">Синус</button>
+                    <button class="wave-opt wave-btn" data-value="triangle">Треуг</button>
+                    <button class="wave-opt wave-btn" data-value="sawtooth">Пила</button>
+                </div>
+            </div>
+
+            <!-- Звуковые параметры -->
+            <div class="flex gap-10 col-span-2 lg:col-span-1">
+                <div class="flex-1">
+                    <span class="control-label">Пространство</span>
+                    <input type="range" id="echo-range" min="0" max="85" value="35">
+                </div>
+                <div class="flex-1">
+                    <span class="control-label">Стабильность</span>
+                    <input type="range" id="smooth-range" min="5" max="95" value="40">
+                </div>
+            </div>
+
+            <!-- Выбор строя -->
+            <div class="space-y-4 text-left lg:text-right col-span-1">
+                <span class="control-label">Музыкальный строй</span>
+                <select id="scale-selector" class="w-full lg:w-auto bg-transparent text-[10px] tracking-[0.2em] uppercase border-b border-white/10 outline-none pb-2 cursor-pointer hover:border-amber-600/50 transition-colors font-semibold">
+                    <option value="chromatic">Хроматический</option>
+                    <option value="major">До-Мажор</option>
+                    <option value="minor">Ля-Минор</option>
+                    <option value="pentatonic" selected>Пентатоника</option>
+                </select>
+            </div>
+
+            <!-- Громкость / Мастер -->
+            <div class="col-span-1">
+                <div class="flex justify-between mb-3">
+                    <span class="control-label !mb-0">Мастер-усиление</span>
+                    <span id="vol-text" class="text-[10px] font-mono text-amber-600 font-bold">0%</span>
+                </div>
+                <div class="h-[2px] bg-white/5 w-full overflow-hidden rounded-full">
+                    <div id="vol-bar" class="h-full bg-gradient-to-r from-amber-700 to-amber-400 shadow-[0_0_20px_rgba(197,160,89,0.5)] transition-all duration-75" style="width: 0%"></div>
+                </div>
+            </div>
+
+        </div>
+    </footer>
+
+    <div id="error-log" class="hidden fixed top-8 right-8 p-5 glass-panel border-red-900/40 text-red-400 text-[10px] tracking-widest uppercase z-[300] rounded-xl"></div>
+
+    <script>
+        const startBtn = document.getElementById('start-btn');
+        const setupScreen = document.getElementById('setup-screen');
+        const videoElement = document.getElementById('webcam');
+        const canvasElement = document.getElementById('output');
+        const canvasCtx = canvasElement.getContext('2d');
+        const freqLabel = document.getElementById('freq-display');
+        const handCountLabel = document.getElementById('hand-count');
+        const modeText = document.getElementById('mode-text');
+        const volBar = document.getElementById('vol-bar');
+        const volText = document.getElementById('vol-text');
+        const vizCanvas = document.getElementById('viz-canvas');
+        const vizCtx = vizCanvas.getContext('2d');
+        const scaleSelector = document.getElementById('scale-selector');
+        const echoRange = document.getElementById('echo-range');
+        const smoothRange = document.getElementById('smooth-range');
+
+        let audioCtx, oscillator, masterGain, delayNode, feedbackNode, analyzer;
+        let isPlaying = false;
+        let currentWave = 'sine';
+        let lerpX = 0.5, lerpY = 0.5;
+
+        const SCALES = {
+            chromatic: null,
+            major: [261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88],
+            minor: [220.00, 246.94, 261.63, 293.66, 329.63, 349.23, 392.00],
+            pentatonic: [261.63, 293.66, 329.63, 392.00, 440.00]
+        };
+
+        function quantizeFrequency(freq, scaleName) {
+            const scale = SCALES[scaleName];
+            if (!scale) return freq;
+            let closest = scale[0];
+            let minDiff = Infinity;
+            for(let oct = -2; oct <= 2; oct++) {
+                scale.forEach(note => {
+                    const actualNote = note * Math.pow(2, oct);
+                    const diff = Math.abs(actualNote - freq);
+                    if(diff < minDiff) { minDiff = diff; closest = actualNote; }
+                });
+            }
+            return closest;
+        }
+
+        function initAudio() {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            oscillator = audioCtx.createOscillator();
+            masterGain = audioCtx.createGain();
+            delayNode = audioCtx.createDelay(1.0);
+            feedbackNode = audioCtx.createGain();
+            analyzer = audioCtx.createAnalyser();
+
+            delayNode.delayTime.value = 0.45;
+            feedbackNode.gain.value = 0.25;
+
+            oscillator.type = currentWave;
+            masterGain.gain.setValueAtTime(0, audioCtx.currentTime);
+
+            oscillator.connect(masterGain);
+            masterGain.connect(audioCtx.destination);
+            masterGain.connect(analyzer);
+            masterGain.connect(delayNode);
+            delayNode.connect(feedbackNode);
+            feedbackNode.connect(delayNode);
+            delayNode.connect(audioCtx.destination);
+
+            oscillator.start();
+            isPlaying = true;
+            drawVisualizer();
+        }
+
+        function updateAudio(pitchVal, volumeVal) {
+            let freq = 60 * Math.pow(2800 / 60, pitchVal);
+            freq = quantizeFrequency(freq, scaleSelector.value);
+            const vol = Math.pow(volumeVal, 3.0) * 0.85; 
+
+            oscillator.frequency.setTargetAtTime(freq, audioCtx.currentTime, 0.04);
+            masterGain.gain.setTargetAtTime(vol, audioCtx.currentTime, 0.04);
+            feedbackNode.gain.setTargetAtTime(echoRange.value / 250, audioCtx.currentTime, 0.1);
+
+            freqLabel.innerText = Math.round(freq).toString().padStart(4, '0');
+            const p = Math.round(vol * 118);
+            volText.innerText = p + '%';
+            volBar.style.width = p + '%';
+        }
+
+        function drawVisualizer() {
+            requestAnimationFrame(drawVisualizer);
+            if (!analyzer) return;
+            const dataArray = new Uint8Array(analyzer.frequencyBinCount);
+            analyzer.getByteTimeDomainData(dataArray);
+
+            vizCtx.clearRect(0, 0, vizCanvas.width, vizCanvas.height);
+            vizCtx.lineWidth = 2;
+            vizCtx.strokeStyle = 'rgba(197, 160, 89, 0.7)';
+            vizCtx.beginPath();
+            const sliceWidth = vizCanvas.width / dataArray.length;
+            let x = 0;
+            for(let i = 0; i < dataArray.length; i++) {
+                const v = dataArray[i] / 128.0;
+                const y = v * vizCanvas.height / 2;
+                if(i === 0) vizCtx.moveTo(x, y); else vizCtx.lineTo(x, y);
+                x += sliceWidth;
+            }
+            vizCtx.stroke();
+        }
+
+        function onResults(results) {
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            const count = results.multiHandLandmarks ? results.multiHandLandmarks.length : 0;
+            handCountLabel.innerText = count;
+
+            if (count > 0) {
+                let pHand = null, vHand = null;
+                
+                results.multiHandLandmarks.forEach((hand, idx) => {
+                    const label = results.multiHandedness[idx].label;
+                    if (label === 'Left') pHand = hand; // Правая рука юзера
+                    else vHand = hand; // Левая рука юзера
+                });
+
+                const smoothing = 1 - (smoothRange.value / 100);
+
+                if (count >= 2 && pHand && vHand) {
+                    modeText.innerText = "ДУЭТ РУК";
+                    lerpX += (pHand[8].x - lerpX) * smoothing; 
+                    lerpY += (vHand[8].y - lerpY) * smoothing; 
+                } else {
+                    modeText.innerText = "СОЛО";
+                    const hand = results.multiHandLandmarks[0];
+                    lerpX += (hand[8].x - lerpX) * smoothing;
+                    lerpY += (hand[8].y - lerpY) * smoothing;
+                }
+
+                updateAudio(1 - lerpX, 1 - lerpY);
+
+                results.multiHandLandmarks.forEach(landmarks => {
+                    drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: 'rgba(212, 175, 55, 0.2)', lineWidth: 1.5});
+                    drawLandmarks(canvasCtx, landmarks, {
+                        color: '#D4AF37', 
+                        lineWidth: 0, 
+                        radius: (d) => d.index === 8 ? 5 : 1.2
+                    });
+                });
+                
+                canvasCtx.shadowBlur = 20;
+                canvasCtx.shadowColor = "#D4AF37";
+                canvasCtx.fillStyle = "#fff";
+                results.multiHandLandmarks.forEach(h => {
+                    canvasCtx.beginPath();
+                    canvasCtx.arc(h[8].x * canvasElement.width, h[8].y * canvasElement.height, 5, 0, 7);
+                    canvasCtx.fill();
+                });
+            } else {
+                handCountLabel.innerText = "0";
+                modeText.innerText = "ОЖИДАНИЕ";
+                if (masterGain) masterGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.25);
+            }
+            canvasCtx.restore();
+        }
+
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.6,
+            minTrackingConfidence: 0.6
+        });
+
+        hands.onResults(onResults);
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => await hands.send({image: videoElement}),
+            width: 1280, height: 720 // Повышенное разрешение для качества
+        });
+
+        startBtn.addEventListener('click', async () => {
+            startBtn.classList.add('hidden');
+            document.getElementById('loader').classList.remove('hidden');
+            try {
+                await camera.start();
+                initAudio();
+                
+                const updateRes = () => {
+                    canvasElement.width = canvasElement.clientWidth;
+                    canvasElement.height = canvasElement.clientHeight;
+                    vizCanvas.width = vizCanvas.clientWidth;
+                    vizCanvas.height = vizCanvas.clientHeight;
+                };
+                window.addEventListener('resize', updateRes);
+                updateRes();
+                
+                setupScreen.classList.add('opacity-0');
+                setTimeout(() => setupScreen.remove(), 1000);
+            } catch (err) {
+                document.getElementById('error-log').innerText = "ОШИБКА КАМЕРЫ: " + err.message;
+                document.getElementById('error-log').classList.remove('hidden');
+            }
+        });
+
+        document.querySelectorAll('.wave-opt').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.wave-opt').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                currentWave = btn.dataset.value;
+                if (oscillator) oscillator.type = currentWave;
+            });
+        });
+
+        window.addEventListener('blur', () => {
+            if (masterGain) masterGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.3);
+        });
+    </script>
+</body>
+</html>
