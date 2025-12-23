@@ -2,8 +2,8 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Терменвокс | Masterpiece Edition</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Терменвокс</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
@@ -22,11 +22,15 @@
             color: #ffffff;
             font-family: 'Inter', sans-serif;
             overflow: hidden;
+            /* Исправление для iOS Safari: используем динамические единицы высоты */
             height: 100vh;
+            height: 100dvh; 
             display: flex;
             flex-direction: column;
             user-select: none;
+            -webkit-user-select: none;
             -webkit-tap-highlight-color: transparent;
+            touch-action: none;
         }
 
         h1 { font-family: 'Cinzel', serif; }
@@ -40,10 +44,11 @@
         .glass-panel {
             background: var(--panel-bg);
             backdrop-filter: blur(40px);
+            -webkit-backdrop-filter: blur(40px);
             border-top: 1px solid rgba(197, 160, 89, 0.15);
+            padding-bottom: env(safe-area-inset-bottom);
         }
 
-        /* Видео теперь занимает максимум места без искажений */
         #output {
             width: 100%;
             height: 100%;
@@ -72,6 +77,7 @@
             padding: 12px 0;
             text-align: center;
             text-transform: uppercase;
+            cursor: pointer;
         }
 
         .wave-btn.active {
@@ -108,8 +114,8 @@
             justify-content: center;
             overflow: hidden;
             background: black;
-            /* Более широкая и мягкая маска для "большого" видео */
             mask-image: radial-gradient(circle at center, black 70%, transparent 100%);
+            -webkit-mask-image: radial-gradient(circle at center, black 70%, transparent 100%);
         }
 
         .hud-num { font-variant-numeric: tabular-nums; font-weight: 200; }
@@ -128,16 +134,20 @@
             position: relative;
             z-index: 50;
         }
+
+        .safe-padding {
+            padding-top: env(safe-area-inset-top);
+        }
     </style>
 </head>
-<body class="safe-area-inset">
+<body class="safe-padding">
 
     <!-- Экран загрузки -->
     <div id="setup-screen" class="fixed inset-0 z-[100] bg-black flex flex-col items-center justify-center p-6 text-center transition-all duration-1000">
         <h1 class="text-4xl md:text-6xl tracking-[0.5em] mb-4 gold-gradient-text opacity-0 animate-[fade_1.5s_ease-out_forwards]">THEREMIN PRO</h1>
         <p class="text-white/20 text-[10px] tracking-[0.3em] uppercase mb-16 font-light italic">Создавая звук движением</p>
         
-        <button id="start-btn" class="px-12 py-6 border border-white/10 hover:border-amber-600/50 transition-all duration-500 text-[11px] tracking-[0.5em] uppercase hover:bg-white/5 active:scale-95">
+        <button id="start-btn" class="px-12 py-6 border border-white/10 hover:border-amber-600/50 transition-all duration-500 text-[11px] tracking-[0.5em] uppercase hover:bg-white/5 active:scale-95 cursor-pointer">
             Запустить интерфейс
         </button>
 
@@ -180,10 +190,10 @@
 
     <!-- Главная сцена: Видео -->
     <main id="video-container">
-        <video id="webcam" class="hidden" autoplay playsinline></video>
+        <!-- Атрибуты для iOS: playsinline, webkit-playsinline, muted -->
+        <video id="webcam" class="hidden" autoplay playsinline webkit-playsinline muted></video>
         <canvas id="output"></canvas>
         
-        <!-- Инфо-подсказки -->
         <div class="absolute inset-x-0 bottom-10 px-16 flex justify-between opacity-30 text-[9px] tracking-[0.4em] uppercase font-mono pointer-events-none">
             <div id="l-hint">Амплитуда (Левая)</div>
             <div id="r-hint">Тональность (Правая)</div>
@@ -194,7 +204,6 @@
     <footer class="glass-panel p-8 md:p-12">
         <div class="max-w-7xl mx-auto grid grid-cols-2 lg:grid-cols-4 gap-10 md:gap-16 items-end">
             
-            <!-- Форма волны -->
             <div class="col-span-2 lg:col-span-1 space-y-4">
                 <span class="control-label">Тип осциллятора</span>
                 <div class="flex rounded-xl overflow-hidden border border-white/10 shadow-lg">
@@ -204,7 +213,6 @@
                 </div>
             </div>
 
-            <!-- Звуковые параметры -->
             <div class="flex gap-10 col-span-2 lg:col-span-1">
                 <div class="flex-1">
                     <span class="control-label">Пространство</span>
@@ -216,7 +224,6 @@
                 </div>
             </div>
 
-            <!-- Выбор строя -->
             <div class="space-y-4 text-left lg:text-right col-span-1">
                 <span class="control-label">Музыкальный строй</span>
                 <select id="scale-selector" class="w-full lg:w-auto bg-transparent text-[10px] tracking-[0.2em] uppercase border-b border-white/10 outline-none pb-2 cursor-pointer hover:border-amber-600/50 transition-colors font-semibold">
@@ -227,7 +234,6 @@
                 </select>
             </div>
 
-            <!-- Громкость / Мастер -->
             <div class="col-span-1">
                 <div class="flex justify-between mb-3">
                     <span class="control-label !mb-0">Мастер-усиление</span>
@@ -287,8 +293,16 @@
             return closest;
         }
 
-        function initAudio() {
-            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        async function initAudio() {
+            // Исправление для Safari: создание контекста при клике
+            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+            audioCtx = new AudioContextClass();
+            
+            // Важно для iOS Safari: возобновить контекст
+            if (audioCtx.state === 'suspended') {
+                await audioCtx.resume();
+            }
+
             oscillator = audioCtx.createOscillator();
             masterGain = audioCtx.createGain();
             delayNode = audioCtx.createDelay(1.0);
@@ -315,6 +329,8 @@
         }
 
         function updateAudio(pitchVal, volumeVal) {
+            if (!oscillator || !masterGain) return;
+            
             let freq = 60 * Math.pow(2800 / 60, pitchVal);
             freq = quantizeFrequency(freq, scaleSelector.value);
             const vol = Math.pow(volumeVal, 3.0) * 0.85; 
@@ -363,8 +379,8 @@
                 
                 results.multiHandLandmarks.forEach((hand, idx) => {
                     const label = results.multiHandedness[idx].label;
-                    if (label === 'Left') pHand = hand; // Правая рука юзера
-                    else vHand = hand; // Левая рука юзера
+                    if (label === 'Left') pHand = hand; 
+                    else vHand = hand; 
                 });
 
                 const smoothing = 1 - (smoothRange.value / 100);
@@ -422,15 +438,18 @@
 
         const camera = new Camera(videoElement, {
             onFrame: async () => await hands.send({image: videoElement}),
-            width: 1280, height: 720 // Повышенное разрешение для качества
+            width: 1280, height: 720
         });
 
         startBtn.addEventListener('click', async () => {
+            startBtn.disabled = true;
             startBtn.classList.add('hidden');
             document.getElementById('loader').classList.remove('hidden');
+            
             try {
+                // Инициализация аудио строго при клике
+                await initAudio();
                 await camera.start();
-                initAudio();
                 
                 const updateRes = () => {
                     canvasElement.width = canvasElement.clientWidth;
@@ -444,8 +463,12 @@
                 setupScreen.classList.add('opacity-0');
                 setTimeout(() => setupScreen.remove(), 1000);
             } catch (err) {
-                document.getElementById('error-log').innerText = "ОШИБКА КАМЕРЫ: " + err.message;
+                console.error(err);
+                document.getElementById('error-log').innerText = "ОШИБКА ДОСТУПА: " + err.message;
                 document.getElementById('error-log').classList.remove('hidden');
+                startBtn.classList.remove('hidden');
+                startBtn.disabled = false;
+                document.getElementById('loader').classList.add('hidden');
             }
         });
 
@@ -458,9 +481,11 @@
             });
         });
 
+        // Плавное затухание при сворачивании вкладки (актуально для iOS)
         window.addEventListener('blur', () => {
-            if (masterGain) masterGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.3);
+            if (masterGain && audioCtx) masterGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.3);
         });
     </script>
 </body>
 </html>
+
